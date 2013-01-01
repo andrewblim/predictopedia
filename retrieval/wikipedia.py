@@ -6,6 +6,7 @@ import re
 import simplejson as json
 import urllib
 import urllib2
+import yaml
 
 def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28, verbose=False):
     
@@ -57,7 +58,7 @@ def film_revisions(film, horizon_start=0, horizon_end=28, verbose=False):
 def attach_wikipedia_titles(films, config_file=None, verbose=False):
     
     if config_file is not None:
-        config = json.loads(open(config_file, 'r').read())
+        config = yaml.load(open(config_file, 'r').read())
     else:
         config = {}
     
@@ -67,13 +68,16 @@ def attach_wikipedia_titles(films, config_file=None, verbose=False):
         (title, year) = (film['title'], film['year'])
         title_year = '%s (%d)' % (title, year)
         if 'title_override' in config and title_year in config['title_override']:
-            wiki_title = config['title_override'][title]
+            wiki_title = config['title_override'][title_year]
         else:
             wiki_title = retrieve_wikipedia_title(films.ix[i])
-        if verbose and wiki_title is not None:
-            clean_wiki_title = re.sub(' \((\d{4} ){0,1}film\)$', '', wiki_title)
-            if clean_wiki_title.lower() != title.lower():
-                print('W: Retrieved %s for %s' % (wiki_title, title))
+        if verbose: 
+            if wiki_title is not None:
+                clean_wiki_title = re.sub(' \((\d{4} ){0,1}film\)$', '', wiki_title)
+                if clean_wiki_title.lower() != title.lower():
+                    print('W: Retrieved %s for %s' % (wiki_title, title))
+            else:
+                print('W: No Wikipedia article found for %s' % title)
         wiki_titles.append(wiki_title)
     films['wiki_title'] = wiki_titles
     return films

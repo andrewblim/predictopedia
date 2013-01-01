@@ -43,13 +43,15 @@ def attach_rt_data(films, api_key=None, config_file=None, http_max_attempts=3,
             # search data? Because genres are missing from search query data
             # alone, sadly - you have to make a direct query for the film by id
             # to get them. 
-            rt_search_data = film_search_best_hit(film['title'], film['year'], 
-                                                  api_key=config['api_key'], 
-                                                  http_max_attempts=http_max_attempts,
-                                                  verbose=verbose)
             try:
+                rt_search_data = film_search_best_hit(film['title'], film['year'], 
+                                                      api_key=config['api_key'], 
+                                                      http_max_attempts=http_max_attempts,
+                                                      verbose=verbose)
                 rt_id = rt_search_data['id']
             except:
+                if verbose:
+                    print('RT: No film ID matched to %s (%s)' % (film['title'], film['year']))
                 rt_id = None
         
         if rt_id is not None:
@@ -60,7 +62,11 @@ def attach_rt_data(films, api_key=None, config_file=None, http_max_attempts=3,
                     break
                 except urllib2.HTTPError as e:
                     if attempts >= http_max_attempts:
-                        raise e
+                        if verbose:
+                            print('RT: Unable to retrieve data for film ID %s, title %s (%s)' % \
+                                  (rt_id, film['title'], film['year']))
+                        rt_data = {}
+                        break
                     else:
                         attempts += 1
             # verbose mode gives a heads-up if the title wasn't a precise match        
