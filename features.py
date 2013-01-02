@@ -98,9 +98,7 @@ def generate_features(films, output_dir, start_year, add_const=True, verbose=Fal
                  'edit_runs_0_7': [0] * n,
                  'word_imax': [0] * n,
                  'similar_revenue': [0] * n,
-                 'friday_open': [0] * n,
-                 'thursday_open': [0] * n,
-                 'wednesday_open': [0] * n,
+                 'summer_teen': [0] * n,
                }
     
     for (i, film_i) in enumerate(use_films.index):
@@ -156,21 +154,17 @@ def generate_features(films, output_dir, start_year, add_const=True, verbose=Fal
             similar_films = films.ix[film['similar_indices']]
             features['similar_revenue'][i] = (similar_films['opening_gross'] / similar_films['opening_theaters']).mean()
         
-        weekday = film['opening_date'].weekday()
-        if weekday == 2:
-            features['wednesday_open'][i] = 1
-        elif weekday == 3:
-            features['thursday_open'][i] = 1
-        elif weekday == 4:
-            features['friday_open'][i] = 1
+        if film['opening_date'].month in range(5,10) and \
+           film['mpaa_rating'] == 'PG-13':
+            features['summer_teen'][i] = 1
     
     features = pd.DataFrame(features, index=use_films.index)
     
     features['runtime'] = films['runtime']
     features['runtime'][features['runtime'].isnull()] = 0
     features['opening_theaters'] = films['opening_theaters']
-    features['edit_runs_0_7_sequel'] = features['edit_runs_0_7'] * features['similar_revenue']
-    features['edit_runs_7_28_sequel'] = features['edit_runs_7_28'] * features['similar_revenue']
+    #features['edit_runs_0_7_sequel'] = features['edit_runs_0_7'] * features['similar_revenue']
+    #features['edit_runs_7_28_sequel'] = features['edit_runs_7_28'] * features['similar_revenue']
     
     if add_const:
         features['const'] = 1

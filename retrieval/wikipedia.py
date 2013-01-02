@@ -1,3 +1,4 @@
+from utilities import http_query
 import datetime
 import hashlib
 import joblib
@@ -5,7 +6,6 @@ import os.path
 import re
 import simplejson as json
 import urllib
-import urllib2
 import yaml
 
 def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28, verbose=False):
@@ -22,7 +22,7 @@ def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28, ver
         else:
             raise Exception('Error: no wiki_title found for film %s, index %i' % (film['title'], i))
 
-def film_revisions(film, horizon_start=0, horizon_end=28, verbose=False):
+def film_revisions(film, horizon_start=0, horizon_end=28, http_max_attempts=3, verbose=False):
     
     all_revisions = []
     api_params = { 'format': 'json', 
@@ -38,7 +38,7 @@ def film_revisions(film, horizon_start=0, horizon_end=28, verbose=False):
                   }
     
     while True:
-        query_result = wikipedia_api(api_params)
+        query_result = wikipedia_api(api_params, http_max_attempts=http_max_attempts)
         pages = query_result['query']['pages']
         if len(pages) < 1 or pages.keys()[0] == -1:
             raise Exception('No Wikipedia page found for %s' % title)
@@ -55,7 +55,7 @@ def film_revisions(film, horizon_start=0, horizon_end=28, verbose=False):
         
     return all_revisions
 
-def attach_wikipedia_titles(films, config_file=None, verbose=False):
+def attach_wikipedia_titles(films, config_file=None, http_max_attempts=3, verbose=False):
     
     if config_file is not None:
         config = yaml.load(open(config_file, 'r').read())
@@ -70,7 +70,7 @@ def attach_wikipedia_titles(films, config_file=None, verbose=False):
         if 'title_override' in config and title_year in config['title_override']:
             wiki_title = config['title_override'][title_year]
         else:
-            wiki_title = retrieve_wikipedia_title(films.ix[i])
+            wiki_title = retrieve_wikipedia_title(films.ix[i], http_max_attempts=http_max_attempts)
         if verbose: 
             if wiki_title is not None:
                 clean_wiki_title = re.sub(' \((\d{4} ){0,1}film\)$', '', wiki_title)
@@ -82,7 +82,7 @@ def attach_wikipedia_titles(films, config_file=None, verbose=False):
     films['wiki_title'] = wiki_titles
     return films
 
-def retrieve_wikipedia_title(film, search_limit=15):
+def retrieve_wikipedia_title(film, search_limit=15, http_max_attempts=3):
     '''
     Given film data (a dictionary with 'title' and 'year' or other data 
     structure that supports this indexing), attempts to retrieve the title of
@@ -99,7 +99,7 @@ def retrieve_wikipedia_title(film, search_limit=15):
                      'action': 'opensearch',
                      'search': urllib.quote(film['title']),
                      'limit': search_limit }
-    query_result = wikipedia_api(query_params)
+    query_result = wikipedia_api(query_params, http_max_attempts=http_max_attempts)
     hits = query_result[1]
     
     # easy cases first
@@ -132,13 +132,13 @@ def retrieve_wikipedia_title(film, search_limit=15):
                 
                 if len(hits) == search_limit:
                     query_params['search'] = (urllib.quote(film['title'] + (' (%d film)' % film['year'])))
-                    query_result2 = wikipedia_api(query_params)
+                    query_result2 = wikipedia_api(query_params, http_max_attempts=http_max_attempts)
                     hits2 = query_result2[1]
                     if len(hits2) > 0:
                         page = hits2[0]
                     else:
                         query_params['search'] = (urllib.quote(film['title'] + ' (film)'))
-                        query_result3 = wikipedia_api(query_params)
+                        query_result3 = wikipedia_api(query_params, http_max_attempts=http_max_attempts)
                         hits3 = query_result3[1]
                         if len(hits3) > 0:
                             page = hits3[0]
@@ -158,7 +158,7 @@ def find_re_matches(regexp, hits):
             matches.append(hit)
     return matches
 
-def wikipedia_api(arg_dict):
+def wikipedia_api(arg_dict, http_max_attempts=3):
     api_url = r'http://en.wikipedia.org/w/api.php?'
     url_args = []
     for key in arg_dict:
@@ -169,7 +169,7 @@ def wikipedia_api(arg_dict):
         else:
             url_args.append('%s=%s' % (key, arg_dict[key]))
     api_url += '&'.join(url_args)
-    return json.loads(urllib2.urlopen(api_url).read())
+    return json.loads(http_query(api_url, http_max_attempts=http_max_attempts).read())
 
 def mediawiki_timestamp(dt):
     if not isinstance(dt, datetime.datetime):

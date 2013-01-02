@@ -1,8 +1,8 @@
+from utilities import http_query
 import difflib
 import re
 import simplejson as json
 import urllib
-import urllib2
 import yaml
 
 def attach_rt_data(films, api_key=None, config_file=None, http_max_attempts=3,
@@ -55,20 +55,10 @@ def attach_rt_data(films, api_key=None, config_file=None, http_max_attempts=3,
                 rt_id = None
         
         if rt_id is not None:
-            attempts = 1
-            while True:
-                try:
-                    rt_data = film_info(rt_id, config['api_key'])
-                    break
-                except urllib2.HTTPError as e:
-                    if attempts >= http_max_attempts:
-                        if verbose:
-                            print('RT: Unable to retrieve data for film ID %s, title %s (%s)' % \
-                                  (rt_id, film['title'], film['year']))
-                        rt_data = {}
-                        break
-                    else:
-                        attempts += 1
+            try:
+                rt_data = film_info(rt_id, config['api_key'], http_max_attempts=http_max_attempts)
+            except:
+                rt_data = {}
             # verbose mode gives a heads-up if the title wasn't a precise match        
             if verbose and re.sub('\W', '', rt_data['title']).lower() != re.sub('\W', '', title).lower():
                 print('RT: Using %s for %s (%s)' % (rt_data['title'], title, year))
@@ -108,33 +98,23 @@ def attach_rt_data(films, api_key=None, config_file=None, http_max_attempts=3,
     
     return films
 
-def film_info(id, api_key):
+def film_info(id, api_key, http_max_attempts=3):
     
     rt_query = r'http://api.rottentomatoes.com/api/public/v1.0/movies/%s.json' % id
     rt_url = '%s?apikey=%s' % (rt_query, api_key)
-    return json.loads(urllib2.urlopen(rt_url).read())
+    return json.loads(http_query(rt_url, http_max_attempts=http_max_attempts).read())
 
-def search_by_title(title, api_key):
+def search_by_title(title, api_key, http_max_attempts=3):
     
     rt_query = r'http://api.rottentomatoes.com/api/public/v1.0/movies.json'
     rt_url = '%s?apikey=%s&q=%s' % (rt_query, api_key, urllib.quote(title))
-    return json.loads(urllib2.urlopen(rt_url).read())
+    return json.loads(http_query(rt_url, http_max_attempts=http_max_attempts).read())
 
 def film_search_best_hit(title, year, api_key, http_max_attempts=3, verbose=False):
     
     year = int(year)
     
-    attempts = 1
-    while True:
-        try:
-            search_data = search_by_title(title, api_key)
-            break
-        except urllib2.HTTPError as e:
-            if attempts >= http_max_attempts:
-                raise e
-            else:
-                attempts += 1
-    
+    search_data = search_by_title(title, api_key, http_max_attempts=http_max_attempts)
     if 'error' in search_data:
         raise Exception('Rotten Tomatoes API returned error: %s' % search_data['error'])
     
