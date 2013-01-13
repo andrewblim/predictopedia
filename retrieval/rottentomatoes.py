@@ -107,7 +107,7 @@ def film_info(id, api_key, http_max_attempts=3):
 def search_by_title(title, api_key, http_max_attempts=3):
     
     rt_query = r'http://api.rottentomatoes.com/api/public/v1.0/movies.json'
-    rt_url = '%s?apikey=%s&q=%s' % (rt_query, api_key, urllib.quote(title))
+    rt_url = '%s?apikey=%s&q=%s' % (rt_query, api_key, urllib.quote(title.encode('utf-8')))
     return json.loads(http_query(rt_url, http_max_attempts=http_max_attempts).read())
 
 def film_search_best_hit(title, year, api_key, http_max_attempts=3, verbose=False):

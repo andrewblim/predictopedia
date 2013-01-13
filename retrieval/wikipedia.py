@@ -8,15 +8,18 @@ import simplejson as json
 import urllib
 import yaml
 
-def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28, verbose=False):
+def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28, 
+                         http_max_attempts=3, verbose=False):
     
     for i in films.index:
         film = films.ix[i]
         if film['wiki_title'] is not None:
-            revisions = film_revisions(film, horizon_start, horizon_end, verbose=verbose)
+            revisions = film_revisions(film, horizon_start, horizon_end, 
+                                       http_max_attempts=http_max_attempts,
+                                       verbose=verbose)
             if verbose:
                 print '(%d) %s / %d revisions' % (i, film['wiki_title'], len(revisions))
-            filename = '%s.revisions' % hashlib.md5(film['wiki_title']).hexdigest()
+            filename = '%s.revisions' % hashlib.md5(film['wiki_title'].encode('utf-8')).hexdigest()
             filename = os.path.join(output_dir, filename)
             joblib.dump(revisions, filename)
         else:
@@ -32,7 +35,7 @@ def film_revisions(film, horizon_start=0, horizon_end=28, http_max_attempts=3, v
                    'rvlimit': 500,
                    'rvdir': 'older',
                    'rvprop': ['ids', 'user', 'userid', 'timestamp', 'flags', 'comment', 'size', 'content'],
-                   'titles': urllib.quote(film['wiki_title']),
+                   'titles': urllib.quote(film['wiki_title'].encode('utf-8')),
                    'rvstart': mediawiki_timestamp(film['opening_date'] - datetime.timedelta(days=horizon_start)),
                    'rvend': mediawiki_timestamp(film['opening_date'] - datetime.timedelta(days=horizon_end)),
                   }
@@ -97,7 +100,7 @@ def retrieve_wikipedia_title(film, search_limit=15, http_max_attempts=3):
     film_re = re.compile(r'\(film\)$')
     query_params = { 'format': 'json',
                      'action': 'opensearch',
-                     'search': urllib.quote(film['title']),
+                     'search': urllib.quote(film['title'].encode('utf-8')),
                      'limit': search_limit }
     query_result = wikipedia_api(query_params, http_max_attempts=http_max_attempts)
     hits = query_result[1]
@@ -131,13 +134,13 @@ def retrieve_wikipedia_title(film, search_limit=15, http_max_attempts=3):
                 # the top 15. Try directly querying w/the label appended. 
                 
                 if len(hits) == search_limit:
-                    query_params['search'] = (urllib.quote(film['title'] + (' (%d film)' % film['year'])))
+                    query_params['search'] = (urllib.quote(film['title'].encode('utf-8') + (' (%d film)' % film['year'])))
                     query_result2 = wikipedia_api(query_params, http_max_attempts=http_max_attempts)
                     hits2 = query_result2[1]
                     if len(hits2) > 0:
                         page = hits2[0]
                     else:
-                        query_params['search'] = (urllib.quote(film['title'] + ' (film)'))
+                        query_params['search'] = (urllib.quote(film['title'].encode('utf-8') + ' (film)'))
                         query_result3 = wikipedia_api(query_params, http_max_attempts=http_max_attempts)
                         hits3 = query_result3[1]
                         if len(hits3) > 0:
@@ -176,3 +179,14 @@ def mediawiki_timestamp(dt):
         return '%04d%02d%02d000000' % (dt.year, dt.month, dt.day)
     else:
         return '%04d%02d%02d%02d%02d%02d' % (dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+
+def load_wikipedia_revisions(film, output_dir):
+    filename = '%s.revisions' % hashlib.md5(film['wiki_title'].encode('utf-8')).hexdigest()
+    filename = os.path.join(output_dir, filename)
+    if not os.path.isfile(filename):
+        raise Exception('Error: expected file %s not found for %s' % (filename, film['wiki_title']))
+    revisions = joblib.load(filename)
+    for rev in revisions:
+        if 'timestamp' in rev:
+            rev['timestamp'] = datetime.datetime.strptime(rev['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
+    return revisions

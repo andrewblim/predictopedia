@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+from retrieval.wikipedia import load_wikipedia_revisions
 import datetime
 import hashlib
 import joblib
@@ -10,11 +11,18 @@ import simplejson as json
 import urllib
 import urllib2
 
-def common_films(films, min_common=3, max_days_apart=1825, verbose=False):
+def common3(members1, members2):
+    common = len(members1 & members2)
+    return 1 if common >= 3 else 0
+
+def common2to4(members1, members2):
+    common = len(members1 & members2)
+    return max(0, min(1, (common - 1)/3.0))
+
+def subsequence_scores(films, metric, max_days_apart=1825, verbose=False):
     
     members = {}
-    similar_indices = [list() for i in range(len(films))]
-    similar_titles = [list() for i in range(len(films))]
+    scores = pd.DataFrame(index=films.index, columns=films.index)
     
     for i in films.index:
         film = films.ix[i]
@@ -27,30 +35,30 @@ def common_films(films, min_common=3, max_days_apart=1825, verbose=False):
     for i in range(len(films.index)):
         
         film1 = films.ix[films.index[i]]
-        for j in range(i+1, len(films.index)):
+        for j in range(i, len(films.index)):
             
             film2 = films.ix[films.index[j]]
             members1 = members[i]
             members2 = members[j]
             
-            # similar if there are at least a certain number of common people
-            # and if they were not released too far apart (default 3 common
-            # people, 1825 days = 5 years)
-            
             datediff = film1['opening_date'] - film2['opening_date']
-            if len(members1 & members2) >= min_common and abs(datediff.days) <= max_days_apart:
+            if abs(datediff.days) > max_days_apart or datediff.days == 0:
+                scores[i][j] = 0
+                scores[j][i] = 0
+            else: 
+                score = metric(members1, members2)
                 if datediff.days > 0:
-                    similar_indices[i].append(films.index[j])
-                    similar_titles[i].append(film2['title'])
-                    if verbose:
-                        print('%s <- %s' % (film1['title'], film2['title']))
-                elif datediff.days < 0:
-                    similar_indices[j].append(films.index[i])
-                    similar_titles[j].append(film1['title'])
-                    if verbose:
-                        print('%s <- %s' % (film2['title'], film1['title']))
+                    scores[i][j] = score
+                    scores[j][i] = 0
+                    if verbose and score > 0:
+                        print('%s <- %s (%.4f)' % (film1['title'], film2['title'], score))
+                else:
+                    scores[j][i] = score
+                    scores[i][j] = 0
+                    if verbose and score > 0:
+                        print('%s <- %s (%.4f)' % (film2['title'], film1['title'], score))
     
-    return (similar_indices, similar_titles)
+    return scores
     
 def prediction_result(films, model, features, response, transform=None):
     prediction = model.predict(features)
@@ -66,42 +74,43 @@ def r2_result(result):
     pred_var = sum((result['actual'] - result['prediction'])**2)
     return 1 - pred_var/total_var
 
-def read_film_csv(film_csv, encoding='utf-8'):
-    '''Read a saved film csv file (converts certain columns)'''
-    films = pd.read_csv(film_csv, encoding=encoding)
-    films['opening_date'] = [datetime.datetime.strptime(x, '%Y-%m-%d').date() for x in films['opening_date']]
-    return films
-
-def write_film_csv(films, film_csv, encoding='utf-8'):
-    '''Writes a film dataframe to a csv file (converts certain columns)'''
-    films.to_csv(film_csv, encoding=encoding)
-    return films
-
-def load_wikipedia_revisions(film, output_dir):
-    filename = '%s.revisions' % hashlib.md5(film['wiki_title']).hexdigest()
-    filename = os.path.join(output_dir, filename)
-    if not os.path.isfile(filename):
-        raise Exception('Error: expected file %s not found for %s' % (filename, film['wiki_title']))
-    revisions = joblib.load(filename)
-    for rev in revisions:
-        if 'timestamp' in rev:
-            rev['timestamp'] = datetime.datetime.strptime(rev['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
-    return revisions
-
-def generate_features(films, output_dir, start_year, add_const=True, verbose=False):
+def generate_features(films, full_films, subsequence, output_dir, add_const=True, 
+                      verbose=False):
     
-    use_films = films[films['year'] >= start_year]
-    
-    response = use_films['opening_gross'] / use_films['opening_theaters']
-    n = len(use_films.index)
+    response = films['opening_gross'] / films['opening_theaters']
+    n = len(films.index)
     features = { 'edit_runs_7_28': [0] * n,      # number of edits, counting consecutive edits by same user as one
                  'edit_runs_0_7': [0] * n,
                  'word_imax': [0] * n,
+                 'word_jpg': [0] * n,
+                 'word_headings': [0] * n,
+                 'avg_size': [0] * n,
                  'similar_revenue': [0] * n,
-                 'summer_teen': [0] * n,
+                 'genre_action': [0] * n,
+                 'genre_animation': [0] * n,
+                 'genre_arthouse': [0] * n,
+                 'genre_classics': [0] * n,
+                 'genre_comedy': [0] * n,
+                 'genre_cult': [0] * n,
+                 'genre_documentary': [0] * n,
+                 'genre_drama': [0] * n,
+                 'genre_horror': [0] * n,
+                 'genre_kids': [0] * n,
+                 'genre_musical': [0] * n,
+                 'genre_mystery': [0] * n,
+                 'genre_romance': [0] * n,
+                 'genre_scifi': [0] * n,
+                 'genre_special': [0] * n,
+                 'genre_sports': [0] * n,
+                 'genre_tv': [0] * n,
+                 'genre_western': [0] * n,
+                 'mpaa_g': [0] * n,
+                 'mpaa_pg': [0] * n,
+                 'mpaa_pg13': [0] * n,
+                 'release_friday': [0] * n,
                }
     
-    for (i, film_i) in enumerate(use_films.index):
+    for (i, film_i) in enumerate(films.index):
         
         film = films.ix[film_i]
         revisions = load_wikipedia_revisions(film, output_dir)
@@ -113,15 +122,56 @@ def generate_features(films, output_dir, start_year, add_const=True, verbose=Fal
         
         # Genre indicators
         
-        #genres = set(film['genres'].split(','))
-        #if 'Romance' in genres:
-        #    features['genre_romance'][i] = 1
-        #if 'Horror' in genres:
-        #    features['genre_horror'][i] = 1
-        #if 'Animation' in genres and ('Kids & Family' in genres or film['mpaa_rating'] == 'G'):
-        #    features['genre_family_animation'][i] = 1
-        #if 'Animation' in genres and not ('Kids & Family' in genres or film['mpaa_rating'] == 'G'):
-        #    features['genre_nonfamily_animation'][i] = 1
+        if not pd.isnull(film['genres']):
+            genres = set(film['genres'].split(','))
+            if 'Action & Adventure' in genres:
+                features['genre_action'][i] = 1
+            if 'Animation' in genres:
+                features['genre_animation'][i] = 1
+            if 'Art House & International' in genres:
+                features['genre_arthouse'][i] = 1
+            if 'Classics' in genres:
+                features['genre_classics'][i] = 1
+            if 'Comedy' in genres:
+                features['genre_comedy'][i] = 1
+            if 'Cult Movies' in genres:
+                features['genre_cult'][i] = 1
+            if 'Documentary' in genres:
+                features['genre_documentary'][i] = 1
+            if 'Drama' in genres:
+                features['genre_drama'][i] = 1
+            if 'Horror' in genres:
+                features['genre_horror'][i] = 1
+            if 'Kids & Family' in genres:
+                features['genre_kids'][i] = 1
+            if 'Musical & Performing Arts' in genres:
+                features['genre_musical'][i] = 1
+            if 'Mystery & Suspense' in genres:
+                features['genre_mystery'][i] = 1
+            if 'Romance' in genres:
+                features['genre_romance'][i] = 1
+            if 'Science Fiction & Fantasy' in genres:
+                features['genre_scifi'][i] = 1
+            if 'Special Interest' in genres:
+                features['genre_special'][i] = 1
+            if 'Sports & Fitness' in genres:
+                features['genre_sports'][i] = 1
+            if 'Television' in genres:
+                features['genre_tv'][i] = 1
+            if 'Western' in genres:
+                features['genre_western'][i] = 1
+        
+        if film['mpaa_rating'] == 'G':
+            features['mpaa_g'][i] = 1
+        elif film['mpaa_rating'] == 'PG':
+            features['mpaa_pg'][i] = 1
+        elif film['mpaa_rating'] == 'PG-13':
+            features['mpaa_pg13'][i] = 1
+        
+        # only a very few films unrated, so anything not in the above 3 buckets gets to be "R or UR"
+        
+        if film['opening_date'].weekday() == 5:
+            features['release_friday'][i] = 1
         
         # Revision-based features
         
@@ -140,32 +190,88 @@ def generate_features(films, output_dir, start_year, add_const=True, verbose=Fal
         features['edit_runs_7_28'][i] = edit_runs_7_28
         
         word_imax = np.array([0] * len(revisions))
-        imax_re = r'\Wimax'
+        word_jpg = np.array([0] * len(revisions))
+        word_headings = np.array([0] * len(revisions))
+        sizes = np.array([0] * len(revisions))
         
         for (j, rev) in enumerate(revisions):
             if '*' in rev:
                 content = rev['*'].lower()
-                word_imax[j] = len(re.findall(r'imax', content))
+                word_imax[j] = len(re.findall(r'\Wimax', content))
+                word_jpg[j] = len(re.findall(r'File:.*\.jpe?g\|', content))
+                word_headings[j] = len(re.findall(r'==.*==', content))
+            sizes[j] = rev['size']
                     
         if len(revisions) > 0:
             features['word_imax'][i] = word_imax.mean()
+            features['word_jpg'][i] = word_jpg.mean()
+            features['word_headings'][i] = word_headings.mean()
+        features['avg_size'][i] = sizes.mean()
         
-        if len(film['similar_indices']) > 0:
-            similar_films = films.ix[film['similar_indices']]
-            features['similar_revenue'][i] = (similar_films['opening_gross'] / similar_films['opening_theaters']).mean()
+        # Similar-film revenue
         
-        if film['opening_date'].month in range(5,10) and \
-           film['mpaa_rating'] == 'PG-13':
-            features['summer_teen'][i] = 1
-    
-    features = pd.DataFrame(features, index=use_films.index)
+        if sum(subsequence[film_i]) > 0:
+            features['similar_revenue'][i] = sum(subsequence[film_i] * full_films['opening_gross'] / \
+                                                 full_films['opening_theaters']) / \
+                                             float(sum(subsequence[film_i]))
+        
+    features = pd.DataFrame(features, index=films.index)
     
     features['runtime'] = films['runtime']
     features['runtime'][features['runtime'].isnull()] = 0
     features['opening_theaters'] = films['opening_theaters']
-    #features['edit_runs_0_7_sequel'] = features['edit_runs_0_7'] * features['similar_revenue']
-    #features['edit_runs_7_28_sequel'] = features['edit_runs_7_28'] * features['similar_revenue']
+    features['year'] = films['year']
     
+    # cross terms
+    """
+    features['edit07_genre_action'] = features['genre_action'] * features['edit_runs_0_7']
+    features['edit07_genre_animation'] = features['genre_animation'] * features['edit_runs_0_7']
+    features['edit07_genre_arthouse'] = features['genre_arthouse'] * features['edit_runs_0_7']
+    features['edit07_genre_classics'] = features['genre_classics'] * features['edit_runs_0_7']
+    features['edit07_genre_comedy'] = features['genre_comedy'] * features['edit_runs_0_7']
+    features['edit07_genre_cult'] = features['genre_cult'] * features['edit_runs_0_7']
+    features['edit07_genre_documentary'] = features['genre_documentary'] * features['edit_runs_0_7']
+    features['edit07_genre_drama'] = features['genre_drama'] * features['edit_runs_0_7']
+    features['edit07_genre_horror'] = features['genre_horror'] * features['edit_runs_0_7']
+    features['edit07_genre_kids'] = features['genre_kids'] * features['edit_runs_0_7']
+    features['edit07_genre_musical'] = features['genre_musical'] * features['edit_runs_0_7']
+    features['edit07_genre_mystery'] = features['genre_mystery'] * features['edit_runs_0_7']
+    features['edit07_genre_romance'] = features['genre_romance'] * features['edit_runs_0_7']
+    features['edit07_genre_scifi'] = features['genre_scifi'] * features['edit_runs_0_7']
+    features['edit07_genre_special'] = features['genre_special'] * features['edit_runs_0_7']
+    features['edit07_genre_sports'] = features['genre_sports'] * features['edit_runs_0_7']
+    features['edit07_genre_tv'] = features['genre_tv'] * features['edit_runs_0_7']
+    features['edit07_genre_western'] = features['genre_western'] * features['edit_runs_0_7']
+    
+    features['edit728_genre_action'] = features['genre_action'] * features['edit_runs_7_28']
+    features['edit728_genre_animation'] = features['genre_animation'] * features['edit_runs_7_28']
+    features['edit728_genre_arthouse'] = features['genre_arthouse'] * features['edit_runs_7_28']
+    features['edit728_genre_classics'] = features['genre_classics'] * features['edit_runs_7_28']
+    features['edit728_genre_comedy'] = features['genre_comedy'] * features['edit_runs_7_28']
+    features['edit728_genre_cult'] = features['genre_cult'] * features['edit_runs_7_28']
+    features['edit728_genre_documentary'] = features['genre_documentary'] * features['edit_runs_7_28']
+    features['edit728_genre_drama'] = features['genre_drama'] * features['edit_runs_7_28']
+    features['edit728_genre_horror'] = features['genre_horror'] * features['edit_runs_7_28']
+    features['edit728_genre_kids'] = features['genre_kids'] * features['edit_runs_7_28']
+    features['edit728_genre_musical'] = features['genre_musical'] * features['edit_runs_7_28']
+    features['edit728_genre_mystery'] = features['genre_mystery'] * features['edit_runs_7_28']
+    features['edit728_genre_romance'] = features['genre_romance'] * features['edit_runs_7_28']
+    features['edit728_genre_scifi'] = features['genre_scifi'] * features['edit_runs_7_28']
+    features['edit728_genre_special'] = features['genre_special'] * features['edit_runs_7_28']
+    features['edit728_genre_sports'] = features['genre_sports'] * features['edit_runs_7_28']
+    features['edit728_genre_tv'] = features['genre_tv'] * features['edit_runs_7_28']
+    features['edit728_genre_western'] = features['genre_western'] * features['edit_runs_7_28']
+    
+    features['edit_07_mpaa_g'] = features['mpaa_g'] * features['edit_runs_0_7']
+    features['edit_07_mpaa_pg'] = features['mpaa_pg'] * features['edit_runs_0_7']
+    features['edit_07_mpaa_pg13'] = features['mpaa_pg13'] * features['edit_runs_0_7']
+    features['edit_728_mpaa_g'] = features['mpaa_g'] * features['edit_runs_7_28']
+    features['edit_728_mpaa_pg'] = features['mpaa_pg'] * features['edit_runs_7_28']
+    features['edit_728_mpaa_pg13'] = features['mpaa_pg13'] * features['edit_runs_7_28']
+    
+    features['edit_07_release_friday'] = features['release_friday'] * features['edit_runs_0_7']
+    features['edit_728_release_friday'] = features['release_friday'] * features['edit_runs_7_28']
+    """
     if add_const:
         features['const'] = 1
-    return (use_films, response, features)
+    return (features, response)
