@@ -17,9 +17,11 @@ Names listed are the names of the packages in `pip`. Versions listed are what I 
 
 ## Regenerating the data and model fit
 
-To regenerate the raw data, run the script `retrieve.py`. This will generate a file `films.csv` containing a list of films to analyze and various descriptive features, and also will populate the `revisions` directory with several pickle files containing Wikipedia revision data. When run as is, the script will download about 2.2 GB of data into `revisions`. Keep in mind that this will also consume a significant fraction of a day's quota worth of Rotten Tomatoes API queries (as of this writing, the free tier is capped at 10,000 requests a day). This may take a while to run but you only need to run it once. 
+To regenerate the raw data, run the script `retrieve.py`. This will generate a file `films.csv` containing a list of films to analyze and various descriptive features, and also will populate the `revisions` directory with several pickle files containing Wikipedia revision data. When run as is, the script will download about 2.2 GB of data into `revisions`. Keep in mind that this will also consume a significant fraction of a day's quota worth of Rotten Tomatoes API queries (as of this writing, the free tier is capped at 10,000 requests a day). This may take a while to run, something on the order of 1 hour on my Macbook Air, but you only need to run it once. 
 
-Once this has been completed, run the script `run.py`. I suggest running it from interactive Python with `execfile(fit.py)` so that you can examine the model object and results as you see fit. But it will also print the prediction results to stdout, so you can run it from the command line as well. This also may take some time to run but should be considerably faster than the data scrape. 
+Once this has been completed, run the script `fit.py`. I suggest running it from interactive Python with `execfile(fit.py)` so that you can further examine the fitted model object, the results and error, etc. as you see fit. But it will also print the prediction results to stdout, so you can run it from the command line as well and get the predictions that way. This script takes a bit of time to run, something on the order of 15 minutes. 
+
+Be aware that numbers may not be exactly the same if the online data has changed - I observed some changes (slightly different Rotten Tomatoes data, revised revenue numbers for recent films, etc.) while working on this project. I have not included my own `films.csv` used to generate the writeup because it contains some data acquired from Rotten Tomatoes which I may not have the right to distribute. 
 
 ## Index of contents
 
@@ -46,6 +48,14 @@ A script that fits a gradient boosting tree model based on the data in `films.cs
 `images.py`
 
 A file containing some ad hoc functions written for the purpose of generating illustrations for the writeup in `docs/`. 
+
+`README.md`
+
+This file, of course. 
+
+`retrieve.py`
+
+A script that runs all the retrieval functions at once and generates `films.csv` and revision data into the `revisions/` directory. 
 
 `retrieval/`
 
