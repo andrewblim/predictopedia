@@ -11,6 +11,14 @@ import yaml
 def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28, 
                          http_max_attempts=3, verbose=False):
     
+    '''
+    Queries Wikipedia for the revision information stored in dataframe films
+    and saves it into directory output_dir as joblib-pickled files. Each film's
+    data is stored in a file whose name is the hash of the title and year. 
+    Use load_wikipedia_revisions() to load this data back in once this has
+    been run. 
+    '''
+    
     for i in films.index:
         film = films.ix[i]
         if film['wiki_title'] is not None:
@@ -26,6 +34,11 @@ def film_revision_scrape(films, output_dir, horizon_start=0, horizon_end=28,
             raise Exception('Error: no wiki_title found for film %s, index %i' % (film['title'], i))
 
 def film_revisions(film, horizon_start=0, horizon_end=28, http_max_attempts=3, verbose=False):
+    
+    '''
+    Retrieves the revisions for film between horizon_start and horizon_end days
+    prior to its opening date. 
+    '''
     
     all_revisions = []
     api_params = { 'format': 'json', 
@@ -59,6 +72,10 @@ def film_revisions(film, horizon_start=0, horizon_end=28, http_max_attempts=3, v
     return all_revisions
 
 def attach_wikipedia_titles(films, config_file=None, http_max_attempts=3, verbose=False):
+    
+    '''
+    Attaches Wikipedia article titles to the dataframe films and returns it. 
+    '''
     
     if config_file is not None:
         config = yaml.load(open(config_file, 'r').read())
@@ -162,6 +179,7 @@ def find_re_matches(regexp, hits):
     return matches
 
 def wikipedia_api(arg_dict, http_max_attempts=3):
+    '''Makes a call to the Wikipedia API'''
     api_url = r'http://en.wikipedia.org/w/api.php?'
     url_args = []
     for key in arg_dict:
@@ -175,12 +193,14 @@ def wikipedia_api(arg_dict, http_max_attempts=3):
     return json.loads(http_query(api_url, http_max_attempts=http_max_attempts).read())
 
 def mediawiki_timestamp(dt):
+    '''Converts a timestamp to the format needed for the MediaWiki API.'''
     if not isinstance(dt, datetime.datetime):
         return '%04d%02d%02d000000' % (dt.year, dt.month, dt.day)
     else:
         return '%04d%02d%02d%02d%02d%02d' % (dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 
 def load_wikipedia_revisions(film, output_dir):
+    '''Loads the revisions for film from the corresponding file in output_dir.'''
     filename = '%s.revisions' % hashlib.md5(film['wiki_title'].encode('utf-8')).hexdigest()
     filename = os.path.join(output_dir, filename)
     if not os.path.isfile(filename):

@@ -26,6 +26,12 @@ def retrieve_all_data(years,
                       rottentomatoes_config_file='config/rottentomatoes.yaml',
                       wikipedia_config_file='config/wikipedia.yaml',
                       verbose=True):
+    
+    '''
+    Runs all the retrieval-related functions at once - after running this you
+    should have a local cache of Wikipedia revisions and also an output csv
+    file with film data. 
+    '''
 
     films = boxofficemojo.domestic_gross(years=years,
                                          config_file=boxofficemojo_config_file,

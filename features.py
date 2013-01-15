@@ -11,30 +11,71 @@ import simplejson as json
 import urllib
 import urllib2
 
-def common3(members1, members2):
-    common = len(members1 & members2)
-    return 1 if common >= 3 else 0
+### Similarity-related functions - pass these into the metric argument
+### of subsequence_scores()
 
-def common2to4(members1, members2):
-    common = len(members1 & members2)
-    return max(0, min(1, (common - 1)/3.0))
+def jaccard_people(members1, members2):
+    common = len(members1['people'] & members2['people'])
+    combined = float(len(members1['people'] | members2['people']))
+    if combined == 0: return 0
+    return common / combined
+
+def jaccard_genres(members1, members2):
+    common = len(members1['genres'] & members2['genres'])
+    combined = float(len(members1['genres'] | members2['genres']))
+    if combined == 0: return 0
+    return common / combined
+
+def sorensen_people(members1, members2):
+    common = len(members1['people'] & members2['people'])
+    denom = float(len(members1['people']) + len(members2['people']))
+    if denom == 0: return 0
+    return 2 * common / denom
+
+def sorensen_genres(members1, members2):
+    common = len(members1['genres'] & members2['genres'])
+    denom = float(len(members1['genres']) + len(members2['genres']))
+    if denom == 0: return 0
+    return 2 * common / denom
+
+def people_by_genres_jaccard(members1, members2):
+    return (jaccard_people(members1, members2) * jaccard_genres(members1, members2)) ** 0.5
+
+def people_by_genres_sorensen(members1, members2):
+    return (sorensen_people(members1, members2) * sorensen_genres(members1, members2)) ** 0.5
 
 def subsequence_scores(films, metric, max_days_apart=1825, verbose=False):
     
-    members = {}
+    '''
+    Calculates subsequence scores (similarity scores, but one-way; films have 0
+    subsequence with films that were released after they were) for the films in
+    the films dataframe. Returns a square matrix dataframe of subsequence 
+    scores. Feature calculation for film i should use the films whose rows in
+    column i have with nonzero scores. 
+    '''
+    
+    if verbose:
+        print('Calculating one=way similarities...')
+    # film in column i receives films in rows j as an input
     scores = pd.DataFrame(index=films.index, columns=films.index)
     
+    members = {}
     for i in films.index:
         film = films.ix[i]
-        members[i] = set()
+        members[i] = { 'people': set(), 'genres': set() }
         if pd.notnull(film['directors']):
-            members[i] |= set([film['directors']])  # don't split - treat directing duos as one
+            members[i]['people'] |= set([film['directors']])  # don't split - treat directing duos as one
         if pd.notnull(film['actors']):
-            members[i] |= set(film['actors'].split(','))
+            members[i]['people'] |= set(film['actors'].split(','))
+        if pd.notnull(film['genres']):
+            members[i]['genres'] |= set(film['genres'].split(','))
     
     for i in range(len(films.index)):
         
         film1 = films.ix[films.index[i]]
+        if verbose:
+            print(film1['title'])
+        
         for j in range(i, len(films.index)):
             
             film2 = films.ix[films.index[j]]
@@ -50,42 +91,37 @@ def subsequence_scores(films, metric, max_days_apart=1825, verbose=False):
                 if datediff.days > 0:
                     scores[i][j] = score
                     scores[j][i] = 0
-                    if verbose and score > 0:
-                        print('%s <- %s (%.4f)' % (film1['title'], film2['title'], score))
                 else:
                     scores[j][i] = score
                     scores[i][j] = 0
-                    if verbose and score > 0:
-                        print('%s <- %s (%.4f)' % (film2['title'], film1['title'], score))
     
     return scores
+
+def print_similar_past(films, film_index, scores):
+    '''Small utility function to print a film's antecedents'''
+    for j in films.index:
+        if scores[film_index][j] > 0:
+            print('%30s <- %30s (%.4f)' % (films.ix[film_index]['title'][:30], 
+                                           films.ix[j]['title'][:30], 
+                                           scores[film_index][j]))
+
+### Feature generation
+
+def generate_features(films, output_dir, add_const=False, verbose=False):
     
-def prediction_result(films, model, features, response, transform=None):
-    prediction = model.predict(features)
-    if transform is not None:
-        prediction = transform(prediction)
-    return pd.DataFrame({'title': [x[:25] for x in films['title']], 
-                         'prediction': np.round(prediction, 0), 
-                         'actual': np.round(response, 0), 
-                         'error': np.round(response - prediction, 0)})
-
-def r2_result(result):
-    total_var = sum((result['actual'] - result['actual'].mean())**2)
-    pred_var = sum((result['actual'] - result['prediction'])**2)
-    return 1 - pred_var/total_var
-
-def generate_features(films, full_films, subsequence, output_dir, add_const=True, 
-                      verbose=False):
+    '''
+    For data in films, calculates all 
+    '''
     
     response = films['opening_gross'] / films['opening_theaters']
     n = len(films.index)
-    features = { 'edit_runs_7_28': [0] * n,      # number of edits, counting consecutive edits by same user as one
+    features = { 'edit_runs_7_28': [0] * n, 
                  'edit_runs_0_7': [0] * n,
                  'word_imax': [0] * n,
-                 'word_jpg': [0] * n,
+                 'word_extfile': [0] * n,
                  'word_headings': [0] * n,
                  'avg_size': [0] * n,
-                 'similar_revenue': [0] * n,
+                 'similar_past_revenue': [0] * n,
                  'genre_action': [0] * n,
                  'genre_animation': [0] * n,
                  'genre_arthouse': [0] * n,
@@ -161,6 +197,8 @@ def generate_features(films, full_films, subsequence, output_dir, add_const=True
             if 'Western' in genres:
                 features['genre_western'][i] = 1
         
+        # only a very few films unrated, so anything not in the above 3 buckets gets to be "R or UR"
+        
         if film['mpaa_rating'] == 'G':
             features['mpaa_g'][i] = 1
         elif film['mpaa_rating'] == 'PG':
@@ -168,16 +206,14 @@ def generate_features(films, full_films, subsequence, output_dir, add_const=True
         elif film['mpaa_rating'] == 'PG-13':
             features['mpaa_pg13'][i] = 1
         
-        # only a very few films unrated, so anything not in the above 3 buckets gets to be "R or UR"
-        
         if film['opening_date'].weekday() == 5:
             features['release_friday'][i] = 1
         
         # Revision-based features
         
         prev_editor = None
-        edit_runs_0_7 = 0
-        edit_runs_7_28 = 0
+        edit_runs_0_7 = 0    # edit run = one string of consecutive edits by
+        edit_runs_7_28 = 0   # the same author
         for rev in revisions:
             if rev['user'] != prev_editor:
                 daydiff = (film['opening_date'] - rev['timestamp'].date()).days
@@ -190,7 +226,7 @@ def generate_features(films, full_films, subsequence, output_dir, add_const=True
         features['edit_runs_7_28'][i] = edit_runs_7_28
         
         word_imax = np.array([0] * len(revisions))
-        word_jpg = np.array([0] * len(revisions))
+        word_extfile = np.array([0] * len(revisions))
         word_headings = np.array([0] * len(revisions))
         sizes = np.array([0] * len(revisions))
         
@@ -198,80 +234,86 @@ def generate_features(films, full_films, subsequence, output_dir, add_const=True
             if '*' in rev:
                 content = rev['*'].lower()
                 word_imax[j] = len(re.findall(r'\Wimax', content))
-                word_jpg[j] = len(re.findall(r'File:.*\.jpe?g\|', content))
+                word_extfile[j] = len(re.findall(r'File:.*|', content))
                 word_headings[j] = len(re.findall(r'==.*==', content))
             sizes[j] = rev['size']
                     
         if len(revisions) > 0:
             features['word_imax'][i] = word_imax.mean()
-            features['word_jpg'][i] = word_jpg.mean()
+            features['word_extfile'][i] = word_extfile.mean()
             features['word_headings'][i] = word_headings.mean()
         features['avg_size'][i] = sizes.mean()
-        
-        # Similar-film revenue
-        
-        if sum(subsequence[film_i]) > 0:
-            features['similar_revenue'][i] = sum(subsequence[film_i] * full_films['opening_gross'] / \
-                                                 full_films['opening_theaters']) / \
-                                             float(sum(subsequence[film_i]))
         
     features = pd.DataFrame(features, index=films.index)
     
     features['runtime'] = films['runtime']
     features['runtime'][features['runtime'].isnull()] = 0
-    features['opening_theaters'] = films['opening_theaters']
+    # features['opening_theaters'] = films['opening_theaters']
     features['year'] = films['year']
     
-    # cross terms
-    """
-    features['edit07_genre_action'] = features['genre_action'] * features['edit_runs_0_7']
-    features['edit07_genre_animation'] = features['genre_animation'] * features['edit_runs_0_7']
-    features['edit07_genre_arthouse'] = features['genre_arthouse'] * features['edit_runs_0_7']
-    features['edit07_genre_classics'] = features['genre_classics'] * features['edit_runs_0_7']
-    features['edit07_genre_comedy'] = features['genre_comedy'] * features['edit_runs_0_7']
-    features['edit07_genre_cult'] = features['genre_cult'] * features['edit_runs_0_7']
-    features['edit07_genre_documentary'] = features['genre_documentary'] * features['edit_runs_0_7']
-    features['edit07_genre_drama'] = features['genre_drama'] * features['edit_runs_0_7']
-    features['edit07_genre_horror'] = features['genre_horror'] * features['edit_runs_0_7']
-    features['edit07_genre_kids'] = features['genre_kids'] * features['edit_runs_0_7']
-    features['edit07_genre_musical'] = features['genre_musical'] * features['edit_runs_0_7']
-    features['edit07_genre_mystery'] = features['genre_mystery'] * features['edit_runs_0_7']
-    features['edit07_genre_romance'] = features['genre_romance'] * features['edit_runs_0_7']
-    features['edit07_genre_scifi'] = features['genre_scifi'] * features['edit_runs_0_7']
-    features['edit07_genre_special'] = features['genre_special'] * features['edit_runs_0_7']
-    features['edit07_genre_sports'] = features['genre_sports'] * features['edit_runs_0_7']
-    features['edit07_genre_tv'] = features['genre_tv'] * features['edit_runs_0_7']
-    features['edit07_genre_western'] = features['genre_western'] * features['edit_runs_0_7']
-    
-    features['edit728_genre_action'] = features['genre_action'] * features['edit_runs_7_28']
-    features['edit728_genre_animation'] = features['genre_animation'] * features['edit_runs_7_28']
-    features['edit728_genre_arthouse'] = features['genre_arthouse'] * features['edit_runs_7_28']
-    features['edit728_genre_classics'] = features['genre_classics'] * features['edit_runs_7_28']
-    features['edit728_genre_comedy'] = features['genre_comedy'] * features['edit_runs_7_28']
-    features['edit728_genre_cult'] = features['genre_cult'] * features['edit_runs_7_28']
-    features['edit728_genre_documentary'] = features['genre_documentary'] * features['edit_runs_7_28']
-    features['edit728_genre_drama'] = features['genre_drama'] * features['edit_runs_7_28']
-    features['edit728_genre_horror'] = features['genre_horror'] * features['edit_runs_7_28']
-    features['edit728_genre_kids'] = features['genre_kids'] * features['edit_runs_7_28']
-    features['edit728_genre_musical'] = features['genre_musical'] * features['edit_runs_7_28']
-    features['edit728_genre_mystery'] = features['genre_mystery'] * features['edit_runs_7_28']
-    features['edit728_genre_romance'] = features['genre_romance'] * features['edit_runs_7_28']
-    features['edit728_genre_scifi'] = features['genre_scifi'] * features['edit_runs_7_28']
-    features['edit728_genre_special'] = features['genre_special'] * features['edit_runs_7_28']
-    features['edit728_genre_sports'] = features['genre_sports'] * features['edit_runs_7_28']
-    features['edit728_genre_tv'] = features['genre_tv'] * features['edit_runs_7_28']
-    features['edit728_genre_western'] = features['genre_western'] * features['edit_runs_7_28']
-    
-    features['edit_07_mpaa_g'] = features['mpaa_g'] * features['edit_runs_0_7']
-    features['edit_07_mpaa_pg'] = features['mpaa_pg'] * features['edit_runs_0_7']
-    features['edit_07_mpaa_pg13'] = features['mpaa_pg13'] * features['edit_runs_0_7']
-    features['edit_728_mpaa_g'] = features['mpaa_g'] * features['edit_runs_7_28']
-    features['edit_728_mpaa_pg'] = features['mpaa_pg'] * features['edit_runs_7_28']
-    features['edit_728_mpaa_pg13'] = features['mpaa_pg13'] * features['edit_runs_7_28']
-    
-    features['edit_07_release_friday'] = features['release_friday'] * features['edit_runs_0_7']
-    features['edit_728_release_friday'] = features['release_friday'] * features['edit_runs_7_28']
-    """
-    if add_const:
-        features['const'] = 1
     return (features, response)
+
+def attach_similar_revenue(films, features, subsequence):
+    '''
+    Attaches similar revenues to features (based on the subsequence scores in
+    subsequence) and returns it. Separated from the rest of the feature generation 
+    to make it easy to try out different similarity metrics without recalculating 
+    all the other features. 
+    '''
+    
+    similar_past_revenue = [0] * len(features)
+    for (i, film_i) in enumerate(features.index):
+        
+        # Similar-film revenue
+        
+        if sum(subsequence[film_i]) > 0:
+            contrib = subsequence[film_i] * films['opening_gross'] / films['opening_theaters']
+            similar_past_revenue[i] = sum(contrib) / float(sum(subsequence[film_i]))
+
+    expanded_features = features.copy(deep=True)
+    expanded_features['similar_past_revenue'] = similar_past_revenue
+    return expanded_features
+
+def train_and_test_data(train_films, test_films, output_dir, 
+                        add_const=True, verbose=False):
+    
+    '''Generates test and train features and response based on the raw data.'''
+    
+    if verbose:
+        print('Generating train features...')                        
+    (train_features, train_response) = generate_features(train_films, 
+                                                         output_dir,
+                                                         add_const=add_const,
+                                                         verbose=verbose)
+    
+    if verbose:
+        print('Generating test features...')   
+    (test_features, test_response) = generate_features(test_films, 
+                                                       output_dir,
+                                                       add_const=add_const,
+                                                       verbose=verbose)
+    
+    return (train_features, train_response, test_features, test_response)
+
+### Prediction generation
+
+def prediction_result(films, model, features, response, transform=None):
+    '''
+    Returns a dataframe containing titles (abbreviated for easy display), 
+    predictions, actual values, and absolute error. 
+    '''
+    prediction = model.predict(features)
+    if transform is not None:
+        prediction = transform(prediction)
+    return pd.DataFrame({'title': [x for x in films['title']], 
+                         'prediction': np.round(prediction, 0), 
+                         'actual': np.round(response, 0), 
+                         'error': np.round(response - prediction, 0)})
+
+def r2_result(result):
+    '''
+    Returns the R2 of a result dataframe as returned by prediction_result. 
+    '''
+    total_var = sum((result['actual'] - result['actual'].mean())**2)
+    pred_var = sum((result['actual'] - result['prediction'])**2)
+    return 1 - pred_var/total_var
